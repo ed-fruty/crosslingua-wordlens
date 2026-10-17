@@ -3,14 +3,15 @@
 
 The first cleaned sense of every Russian gloss is machine-translated into Ukrainian through
 Google's free translateHtml endpoint -- the one the firmware's "Google (Free) - HTML" engine
-calls -- in batches of up to 100 glosses, rate-limited. Results live in en-uk.translations.tsv next to this
-script (`russian<TAB>ukrainian`, sorted, one line per distinct Russian gloss; an empty
+calls -- in batches of up to 100 glosses, rate-limited. Results live in data/en-uk.translations.tsv
+(`russian<TAB>ukrainian`, sorted, one line per distinct Russian gloss; an empty
 Ukrainian side records a failed translation). The cache is committed, so a rebuild is offline
 and deterministic and only Russian glosses that are new (or failed last time) hit the network.
 
 Normally driven by update_packs.py; standalone use fills the cache:
 
-    python3 scripts/wordlens/make_en_uk.py --en-ru path/to/en-ru.json
+    python3 scripts/make_en_uk.py --en-ru path/to/en-ru.json
+    python3 scripts/make_en_uk.py --probe     # exit 0 when the translation service answers
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lens_format import SENSE_JOINER, clean_gloss, load_pack_json  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CACHE = os.path.join(HERE, "en-uk.translations.tsv")
+DEFAULT_CACHE = os.path.abspath(os.path.join(HERE, "..", "data", "en-uk.translations.tsv"))
 # Google's translateHtml endpoint with the public web key, i.e. the firmware's "Google (Free) - HTML"
 # engine (ParagraphTranslator::translateGoogleHtml). It takes an array of texts per request.
 ENDPOINT = "https://translate-pa.googleapis.com/v1/translateHtml"
@@ -203,13 +204,32 @@ def derive_en_uk(
     return {"meta": meta, "entries": entries, "inflections": en_ru.get("inflections", {})}
 
 
+def probe() -> bool:
+    """One small request, no retries: is the translation service reachable from here?"""
+    try:
+        out = _translate_html_request(["кровавый", "шептать"])
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError) as exc:
+        print(f"en-uk: translation service unavailable ({exc})", file=sys.stderr)
+        return False
+    if not out or not all(out):
+        print("en-uk: translation service returned no translation", file=sys.stderr)
+        return False
+    print(f"en-uk: translation service OK ({', '.join(out)})", file=sys.stderr)
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--en-ru", required=True, help="Readest en-ru.json")
+    ap.add_argument("--probe", action="store_true", help="only check that the translation service answers")
+    ap.add_argument("--en-ru", help="Readest en-ru.json")
     ap.add_argument("--cache", default=DEFAULT_CACHE)
     ap.add_argument("--offline", action="store_true", help="never call the translation service")
     ap.add_argument("--out", help="also write the derived pack as JSON")
     args = ap.parse_args()
+    if args.probe:
+        return 0 if probe() else 1
+    if not args.en_ru:
+        ap.error("--en-ru is required")
     stats = UkStats()
     pack = derive_en_uk(load_pack_json(args.en_ru), args.cache, None if args.offline else google_translator, stats)
     print(

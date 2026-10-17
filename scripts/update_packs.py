@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Refresh the Word Lens packs in lingua-data/wordlens/ from the Readest CDN.
+"""Refresh the Word Lens packs in data/ from the Readest CDN.
 
 The packs, their manifest and ATTRIBUTION.md live in one committed archive,
-lingua-data/wordlens/word-lens-packs.tar.xz (see pack_archive.py); ATTRIBUTION.md is also kept
-next to it as plain text.
+data/word-lens-packs.tar.xz (see pack_archive.py); ATTRIBUTION.md is also kept at the
+repository root as plain text.
 
 Idempotent: a pack is re-downloaded and re-converted only when Readest's JSON changed (its
 sha256 in the Readest manifest), when our format/data version changed, or when our .lens is
@@ -14,11 +14,15 @@ en-uk is derived from en-ru (make_en_uk.py): Russian glosses already in the comm
 translation cache are reused; only new ones (and, with --retry-failed, previously failed ones)
 are sent to the translation service. Entries whose gloss could not be translated are dropped.
 
-    python3 scripts/wordlens/update_packs.py                     # refresh everything that changed
-    python3 scripts/wordlens/update_packs.py --dry-run           # report what would change
-    python3 scripts/wordlens/update_packs.py --pairs en-ru,en-uk # limit to some pairs
-    python3 scripts/wordlens/update_packs.py --readest-dir ~/readest/apps/readest-app/data/wordlens
-    python3 scripts/wordlens/update_packs.py --offline           # never call the translation service
+    python3 scripts/update_packs.py                     # refresh everything that changed
+    python3 scripts/update_packs.py --dry-run           # report what would change
+    python3 scripts/update_packs.py --pairs en-ru,en-uk # limit to some pairs
+    python3 scripts/update_packs.py --exclude en-uk     # everything but some pairs
+    python3 scripts/update_packs.py --readest-dir ~/readest/apps/readest-app/data/wordlens
+    python3 scripts/update_packs.py --offline           # never call the translation service
+
+Packs that are not Readest's (imported with import_packs.py) are carried over untouched, and so
+are the `<!-- name:begin -->` ... `<!-- name:end -->` sections of ATTRIBUTION.md.
 
 Exits non-zero when a download does not match its sha256 or a built pack fails verification.
 Commits are left to you; the script prints the paths to `git add`.
@@ -30,6 +34,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -40,8 +45,11 @@ import make_en_uk  # noqa: E402
 from pack_archive import ARCHIVE_NAME, ATTRIBUTION_NAME, MANIFEST_NAME, read_archive, write_archive  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
-DEFAULT_OUT = os.path.join(REPO, "lingua-data", "wordlens")
+REPO = os.path.abspath(os.path.join(HERE, ".."))
+DEFAULT_OUT = os.path.join(REPO, "data")
+DEFAULT_ATTRIBUTION_PATH = os.path.join(REPO, ATTRIBUTION_NAME)
+# Sections of ATTRIBUTION.md that other tools own (import_packs.py); kept verbatim on rewrite.
+KEPT_SECTION = re.compile(r"<!-- ([A-Za-z0-9_.-]+):begin -->\n.*?<!-- \1:end -->\n?", re.S)
 READEST_CDN = "https://cdn.readest.com/wordlens"
 
 # Data release number of the generated packs. Bump when the packs change for a reason the
@@ -161,13 +169,18 @@ def manifest_entry(pair, meta, image, stats, extra):
     return entry
 
 
-def attribution_text(packs: list[dict], attributions: dict[str, str]) -> str:
+def kept_sections(previous: str) -> list[str]:
+    return [m.group(0).rstrip("\n") + "\n" for m in KEPT_SECTION.finditer(previous)]
+
+
+def attribution_text(packs: list[dict], attributions: dict[str, str], previous: str = "") -> str:
     lines = [
         "# Word Lens data attributions",
         "",
-        "The `.lens` packs in this directory are converted from Readest's Word Lens JSON packs",
+        "The Readest-derived `.lens` packs are converted from Readest's Word Lens JSON packs",
         "(https://github.com/readest/readest, `apps/readest-app/data/wordlens`, served from",
-        f"{READEST_CDN}) by `scripts/wordlens/update_packs.py`. Glosses are cleaned (first",
+        f"{READEST_CDN}) by `scripts/update_packs.py` of",
+        "https://github.com/ed-fruty/crosslingua-wordlens. Glosses are cleaned (first",
         "senses only, markup, part-of-speech tags, stress marks and Arabic vowel signs removed).",
         "",
         "Sources and licences (CC-BY-SA data stays CC-BY-SA in the converted packs):",
@@ -190,15 +203,21 @@ def attribution_text(packs: list[dict], attributions: dict[str, str]) -> str:
     for p in packs:
         lines.append(f"- `{p['file']}`: {attributions.get(p['pair'], lens_format.DEFAULT_ATTRIBUTION)}")
     lines.append("")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    for section in kept_sections(previous):
+        text += "\n" + section
+    return text
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--readest-dir", help="use a local Readest data/wordlens checkout instead of the CDN")
-    ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--out", default=DEFAULT_OUT, help="directory holding the pack archive (default: data/)")
+    ap.add_argument("--attribution", default=DEFAULT_ATTRIBUTION_PATH,
+                    help="plain-text copy of ATTRIBUTION.md (default: the repository root)")
     ap.add_argument("--en-uk-cache", default=make_en_uk.DEFAULT_CACHE)
     ap.add_argument("--pairs", help="comma-separated pairs to process (default: all supported)")
+    ap.add_argument("--exclude", help="comma-separated pairs to leave as they are")
     ap.add_argument("--dry-run", action="store_true", help="report changes without writing or translating")
     ap.add_argument("--offline", action="store_true", help="never call the translation service")
     ap.add_argument("--retry-failed", action="store_true", help="re-derive en-uk to retry failed translations")
@@ -221,15 +240,18 @@ def run(args) -> int:
     old = load_manifest(members)
     old_by_pair = {p["pair"]: p for p in old.get("packs", [])}
 
-    wanted = None if not args.pairs else {p.strip() for p in args.pairs.split(",") if p.strip()}
+    def pair_list(value):
+        return None if not value else {p.strip() for p in value.split(",") if p.strip()}
+
+    wanted = pair_list(args.pairs)
+    excluded = pair_list(args.exclude) or set()
     upstream_pairs = sorted(p for p, e in source.by_pair.items() if e["source"] in SUPPORTED_SOURCES)
     all_pairs = sorted(set(upstream_pairs) | {d for d, base in DERIVED.items() if base in source.by_pair})
-    selected = [p for p in all_pairs if wanted is None or p in wanted]
-    if wanted:
-        unknown = wanted - set(all_pairs)
-        if unknown:
-            print(f"unknown pairs: {', '.join(sorted(unknown))}", file=sys.stderr)
-            return 2
+    selected = [p for p in all_pairs if (wanted is None or p in wanted) and p not in excluded]
+    unknown = ((wanted or set()) | excluded) - set(all_pairs)
+    if unknown:
+        print(f"unknown pairs: {', '.join(sorted(unknown))}", file=sys.stderr)
+        return 2
 
     def up_to_date(pair: str, readest_sha: str | None, extra_key: str | None = None, extra_val=None) -> bool:
         prev = old_by_pair.get(pair)
@@ -342,7 +364,8 @@ def run(args) -> int:
 
     os.makedirs(out_dir, exist_ok=True)
     manifest_text = json.dumps(manifest, ensure_ascii=False, indent=1) + "\n"
-    attribution = attribution_text(packs, attributions)
+    previous = members.get(ATTRIBUTION_NAME, b"").decode("utf-8")
+    attribution = attribution_text(packs, attributions, previous)
     new_members: dict[str, bytes] = {MANIFEST_NAME: manifest_text.encode("utf-8"),
                                      ATTRIBUTION_NAME: attribution.encode("utf-8")}
     for p in packs:
@@ -351,18 +374,18 @@ def run(args) -> int:
             raise VerificationError(f"{p['pair']}: no pack image to archive")
         new_members[p["file"]] = image
     archive_changed = write_archive(archive_path, new_members)
-    attribution_path = os.path.join(out_dir, ATTRIBUTION_NAME)
+    attribution_path = args.attribution
     if read_bytes(attribution_path) != attribution.encode("utf-8"):
         with open(attribution_path, "w", encoding="utf-8") as f:
             f.write(attribution)
         archive_changed = True
 
-    rel = os.path.relpath(out_dir, REPO)
     total = sum(p["bytes"] for p in packs)
     print(f"{len(packs)} packs, {total / 1e6:.1f} MB unpacked, {os.path.getsize(archive_path) / 1e6:.1f} MB "
-          f"archive in {rel}", file=sys.stderr)
+          f"archive in {os.path.relpath(out_dir, REPO)}", file=sys.stderr)
     if archive_changed:
-        print("suggested: git add " + rel + " " + os.path.relpath(args.en_uk_cache, REPO))
+        paths = (archive_path, attribution_path, args.en_uk_cache)
+        print("suggested: git add " + " ".join(os.path.relpath(p, REPO) for p in paths))
     return 0
 
 

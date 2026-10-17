@@ -1,4 +1,4 @@
-"""Offline tests for the Word Lens pack tooling (run: python3 -m unittest -v test_wordlens)."""
+"""Offline tests for the Word Lens pack tooling (run: python3 -m unittest discover -s tests -v)."""
 
 from __future__ import annotations
 
@@ -12,10 +12,11 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 
 import lens_format  # noqa: E402
 import make_en_uk  # noqa: E402
+import import_packs  # noqa: E402
 import make_fixtures  # noqa: E402
 import pack_archive  # noqa: E402
 import stage_release_assets  # noqa: E402
@@ -172,7 +173,8 @@ class UpdatePacksTest(unittest.TestCase):
             json.dump(manifest, f)
 
     def run_update(self, *extra):
-        argv = ["--readest-dir", self.readest, "--out", self.out, "--en-uk-cache", self.cache, "--offline", *extra]
+        argv = ["--readest-dir", self.readest, "--out", self.out, "--attribution",
+                os.path.join(self.out, "ATTRIBUTION.md"), "--en-uk-cache", self.cache, "--offline", *extra]
         with _quiet(), contextlib.redirect_stdout(io.StringIO()):
             return update_packs.main(argv)
 
@@ -204,9 +206,12 @@ class UpdatePacksTest(unittest.TestCase):
 
         # The release staging step extracts and checks every asset.
         staged = os.path.join(self.dir, "staged")
+        notes = os.path.join(self.dir, "notes.md")
         with _quiet(), contextlib.redirect_stdout(io.StringIO()) as printed:
-            self.assertEqual(stage_release_assets.main(["--data", self.out, "--out", staged]), 0)
+            self.assertEqual(stage_release_assets.main(["--data", self.out, "--out", staged, "--notes", notes]), 0)
         self.assertEqual(printed.getvalue().strip(), "4")
+        with open(notes, encoding="utf-8") as f:
+            self.assertIn("`word-lens-en-uk.lens`", f.read())
         self.assertEqual(sorted(os.listdir(staged)), ["word-lens-ATTRIBUTION.md", "word-lens-en-ru.lens",
                                                       "word-lens-en-uk.lens", "word-lens-manifest.json"])
 
@@ -229,6 +234,83 @@ class UpdatePacksTest(unittest.TestCase):
             f.write(b" ")
         self.assertNotEqual(self.run_update("--force"), 0)
         self.assertNotEqual(self.run_update("--pairs", "xx-yy"), 0)
+
+    def test_exclude_leaves_a_pair_alone(self):
+        self.assertEqual(self.run_update("--exclude", "en-uk"), 0)
+        members = set(self.snapshot()) - {"<archive>", "<attribution>"}
+        self.assertNotIn("word-lens-en-uk.lens", members)
+        self.assertEqual(self.run_update(), 0)
+        first = self.snapshot()
+        changed = en_ru_pack()
+        changed["entries"]["murmur"] = {"r": 8000, "g": "шепта́ть"}
+        self.write_pack(changed)
+        self.assertEqual(self.run_update("--exclude", "en-uk"), 0)
+        after = self.snapshot()
+        self.assertNotEqual(after["word-lens-en-ru.lens"], first["word-lens-en-ru.lens"])
+        self.assertEqual(after["word-lens-en-uk.lens"], first["word-lens-en-uk.lens"])
+        self.assertNotEqual(self.run_update("--exclude", "xx-yy"), 0)
+
+    def write_external(self, pair="ro-uk"):
+        """An ua-dict style dist/wordlens directory with one pack."""
+        ext = os.path.join(self.dir, "ext")
+        os.makedirs(ext, exist_ok=True)
+        source, target = pair.split("-")
+        pack = {"meta": {"source": source, "target": target, "attribution": "Fixture ro glosses."},
+                "entries": {"casa": {"r": 3000, "g": "дім"}, "merge": {"r": 4000, "g": "йти"}},
+                "inflections": {"case": "casa"}}
+        image, stats = lens_format.build_lens(pack)
+        name = f"word-lens-{pair}.lens"
+        with open(os.path.join(ext, name), "wb") as f:
+            f.write(image)
+        entry = {"pair": pair, "source": source, "target": target, "file": name, "bytes": len(image),
+                 "sha256": hashlib.sha256(image).hexdigest(), "entries": stats.records,
+                 "headwords": stats.headwords, "version": 1,
+                 "origin": {"tool": "ua-dict", "profile": "personal", "sources": ["wikt-ro-en"]}}
+        with open(os.path.join(ext, import_packs.MANIFEST_FRAGMENT), "w", encoding="utf-8") as f:
+            json.dump({"schemaVersion": 1, "formatVersion": lens_format.FORMAT_VERSION, "packs": [entry]}, f)
+        with open(os.path.join(ext, import_packs.ATTRIBUTION_FRAGMENT), "w", encoding="utf-8") as f:
+            f.write(f"# Word Lens packs built by ua-dict\n\n- `{name}`: Fixture ro glosses.\n")
+        return ext
+
+    def run_import(self, *extra):
+        argv = ["--data", self.out, "--attribution", os.path.join(self.out, "ATTRIBUTION.md"), *extra]
+        with _quiet(), contextlib.redirect_stdout(io.StringIO()):
+            return import_packs.main(argv)
+
+    def test_imported_packs_survive_a_refresh(self):
+        self.assertEqual(self.run_update(), 0)
+        ext = self.write_external()
+        self.assertEqual(self.run_import("--packs", ext), 0)  # dry run
+        self.assertNotIn("word-lens-ro-uk.lens", self.snapshot())
+        self.assertEqual(self.run_import("--packs", ext, "--apply"), 0)
+        imported = self.snapshot()
+        self.assertIn("word-lens-ro-uk.lens", imported)
+        attribution = imported["ATTRIBUTION.md"].decode("utf-8")
+        self.assertEqual(attribution.count("<!-- ua-dict:begin -->"), 1)
+        self.assertIn("wikt-ro-en", attribution)
+        self.assertEqual(imported["ATTRIBUTION.md"], imported["<attribution>"])
+
+        # Re-importing replaces the section; a Readest refresh keeps the pack and the section.
+        self.assertEqual(self.run_import("--packs", ext, "--apply"), 0)
+        self.assertEqual(self.snapshot(), imported)
+        changed = en_ru_pack()
+        changed["entries"]["murmur"] = {"r": 8000, "g": "шепта́ть"}
+        self.write_pack(changed)
+        self.assertEqual(self.run_update(), 0)
+        after = self.snapshot()
+        self.assertEqual(after["word-lens-ro-uk.lens"], imported["word-lens-ro-uk.lens"])
+        self.assertEqual(after["ATTRIBUTION.md"].decode("utf-8").count("<!-- ua-dict:begin -->"), 1)
+        self.assertIn("word-lens-ro-uk.lens", after["ATTRIBUTION.md"].decode("utf-8"))
+        manifest = json.loads(after["word-lens-manifest.json"])
+        self.assertIn("ro-uk", [p["pair"] for p in manifest["packs"]])
+
+        # Readest packs cannot be replaced or removed by the importer; imported ones can be removed.
+        self.assertNotEqual(self.run_import("--remove", "en-ru", "--apply"), 0)
+        self.assertEqual(self.run_import("--remove", "ro-uk", "--name", "ua-dict", "--apply"), 0)
+        removed = self.snapshot()
+        self.assertNotIn("word-lens-ro-uk.lens", removed)
+        self.assertNotIn("ua-dict:begin", removed["ATTRIBUTION.md"].decode("utf-8"))
+        self.assertNotEqual(self.run_import("--packs", self.write_external("en-ru"), "--apply"), 0)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
 """Word Lens `.lens` pack format: gloss cleaning, writer and reader.
 
-This module is the reference implementation of the on-device format. The firmware's
-streaming converter (src/modules/lingua/wordlens/LensBuilder.cpp) implements the SAME
-algorithm and must produce byte-identical files from the same Readest JSON pack; the
-host test test/word_lens_format checks that on a fixture. Change both together and bump
-FORMAT_VERSION when the bytes change.
+This module is the reference implementation of the on-device format. The CrossLingua
+firmware's streaming converter (https://github.com/ed-fruty/crosslingua-reader,
+src/modules/lingua/wordlens/LensBuilder.cpp) implements the SAME algorithm and must produce
+byte-identical files from the same Readest JSON pack; its host test test/word_lens_format checks
+that on the fixtures made by make_fixtures.py. Change both together and bump FORMAT_VERSION when
+the bytes change.
 
-Layout (all integers little-endian, see docs/file-formats.md "Word Lens pack (.lens)"):
+Layout (all integers little-endian, see the firmware's docs/file-formats.md "Word Lens pack (.lens)"):
 
     header (64 bytes)
     bucket table: (bucketCount + 1) x u32, offsets relative to the records section

@@ -1,4 +1,4 @@
-"""The committed Word Lens pack archive: lingua-data/wordlens/word-lens-packs.tar.xz.
+"""The committed Word Lens pack archive: data/word-lens-packs.tar.xz.
 
 The packs are binary, so they are committed as one compressed archive rather than as loose files.
 tar + xz because Python's standard library writes it byte-for-byte reproducibly (fixed member

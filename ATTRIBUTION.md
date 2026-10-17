@@ -1,8 +1,9 @@
 # Word Lens data attributions
 
-The `.lens` packs in this directory are converted from Readest's Word Lens JSON packs
+The Readest-derived `.lens` packs are converted from Readest's Word Lens JSON packs
 (https://github.com/readest/readest, `apps/readest-app/data/wordlens`, served from
-https://cdn.readest.com/wordlens) by `scripts/wordlens/update_packs.py`. Glosses are cleaned (first
+https://cdn.readest.com/wordlens) by `scripts/update_packs.py` of
+https://github.com/ed-fruty/crosslingua-wordlens. Glosses are cleaned (first
 senses only, markup, part-of-speech tags, stress marks and Arabic vowel signs removed).
 
 Sources and licences (CC-BY-SA data stays CC-BY-SA in the converted packs):

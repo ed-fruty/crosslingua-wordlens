@@ -1,0 +1,33 @@
+name: CI
+
+# Offline tests of the pack tooling, and the same archive checks the release runs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Check the committed archive
+        run: |
+          set -euo pipefail
+          expected="$(python3 -c 'import json, tarfile; t = tarfile.open("data/word-lens-packs.tar.xz"); print(len(json.load(t.extractfile("word-lens-manifest.json"))["packs"]) + 2)')"
+          staged="$(python3 scripts/stage_release_assets.py --out "$RUNNER_TEMP/assets")"
+          test "$staged" -eq "$expected"
+          # The plain-text ATTRIBUTION.md matches the one inside the archive.
+          tar -xJOf data/word-lens-packs.tar.xz ATTRIBUTION.md | cmp - ATTRIBUTION.md

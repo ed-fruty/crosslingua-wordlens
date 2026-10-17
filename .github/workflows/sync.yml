@@ -1,0 +1,118 @@
+name: Sync from Readest
+
+# Weekly (and on demand): refresh the packs from the Readest CDN with scripts/update_packs.py and
+# open (or update) a pull request from the sync/readest branch. en-uk is re-derived only when
+# Google's free translation endpoint answers from the runner; otherwise every other pack is still
+# refreshed, en-uk keeps its current version and the PR says so.
+#
+# Opening the PR with GITHUB_TOKEN needs Settings -> Actions -> General -> "Allow GitHub Actions
+# to create and approve pull requests". PRs opened by GITHUB_TOKEN do not trigger ci.yml, so this
+# workflow runs the tests itself before pushing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pairs:
+        description: 'Comma-separated pairs to refresh (empty: all)'
+        required: false
+        default: ''
+      retry_failed:
+        description: 'Retry Russian glosses whose Ukrainian translation failed before'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 4 * * 1'  # Mondays, 04:23 UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+env:
+  BRANCH: sync/readest
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check the translation service
+        id: probe
+        run: |
+          if python3 scripts/make_en_uk.py --probe; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Translation service unreachable from the runner; en-uk is left as it is."
+          fi
+
+      - name: Refresh packs
+        env:
+          PAIRS: ${{ inputs.pairs }}
+          RETRY_FAILED: ${{ inputs.retry_failed }}
+          TRANSLATE_OK: ${{ steps.probe.outputs.ok }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${PAIRS:-}" ]; then args+=(--pairs "$PAIRS"); fi
+          if [ "${RETRY_FAILED:-false}" = "true" ]; then args+=(--retry-failed); fi
+          if [ "$TRANSLATE_OK" != "true" ]; then args+=(--exclude en-uk); fi
+          python3 scripts/update_packs.py "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/sync.log"
+
+      - name: Tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRANSLATE_OK: ${{ steps.probe.outputs.ok }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "All packs up to date." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 scripts/stage_release_assets.py --out "$RUNNER_TEMP/assets" --notes "$RUNNER_TEMP/notes.md" > /dev/null
+          {
+            echo "Automated refresh from the Readest CDN (\`scripts/update_packs.py\`)."
+            echo
+            if [ "$TRANSLATE_OK" != "true" ]; then
+              echo "> **en-uk was not refreshed**: the translation service did not answer from the runner."
+              echo "> Run \`python3 scripts/update_packs.py --pairs en-uk\` locally and push to this branch."
+              echo
+            fi
+            echo '```'
+            grep -v '^fetch ' "$RUNNER_TEMP/sync.log" | tail -n 60
+            echo '```'
+            echo
+            cat "$RUNNER_TEMP/notes.md"
+            echo
+            echo "After merging, tag a release: \`git tag packs-$(date -u +%Y.%m.%d) && git push origin --tags\`."
+          } > "$RUNNER_TEMP/body.md"
+          cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A data ATTRIBUTION.md
+          git commit -q -m "data: sync Word Lens packs from Readest ($(date -u +%Y-%m-%d))"
+          git push --force origin "HEAD:$BRANCH"
+
+          title="Sync Word Lens packs from Readest ($(date -u +%Y-%m-%d))"
+          number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          elif ! gh pr create --head "$BRANCH" --base "${{ github.event.repository.default_branch }}" \
+                 --title "$title" --body-file "$RUNNER_TEMP/body.md"; then
+            echo "::error::Pushed $BRANCH but could not open the PR. Enable Settings -> Actions -> General -> 'Allow GitHub Actions to create and approve pull requests', or open it by hand: ${{ github.server_url }}/${{ github.repository }}/compare/$BRANCH?expand=1"
+            exit 1
+          fi

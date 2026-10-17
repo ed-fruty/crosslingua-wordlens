@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Regenerate the Word Lens test fixtures in test/word_lens_format/fixtures/.
+"""Regenerate the Word Lens test fixtures in tests/fixtures/.
 
 The JSON packs are small hand-made Readest-shaped packs that exercise every cleaning and folding
 rule; the .lens.hex files next to them are what lens_format.build_lens() makes of them, as hex
 text (no binary packs are committed). The C++ host test checks that the device converter
 (LensBuilder) produces the same bytes, and test_wordlens.py checks that this script still
-reproduces the committed files.
+reproduces the committed files. The firmware repository keeps its own copy of these files in
+test/word_lens_format/fixtures/; refresh both together when the format or a cleaning rule changes:
 
-    python3 scripts/wordlens/make_fixtures.py [readest-data-wordlens-dir]
+    python3 scripts/make_fixtures.py [readest-data-wordlens-dir]
+    python3 scripts/make_fixtures.py --out ../crosslingua-reader/test/word_lens_format/fixtures [readest-dir]
 
 With a Readest data/wordlens directory it also refreshes gloss_cases.txt.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -23,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lens_format  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIXTURES = os.path.abspath(os.path.join(HERE, "..", "..", "test", "word_lens_format", "fixtures"))
+FIXTURES = os.path.abspath(os.path.join(HERE, "..", "tests", "fixtures"))
 
 
 def mini_en_ru() -> dict:
@@ -102,20 +105,20 @@ def to_hex(data: bytes) -> str:
     return "".join(h[i : i + 64] + "\n" for i in range(0, len(h), 64))
 
 
-def write(name: str, pack: dict) -> None:
-    os.makedirs(FIXTURES, exist_ok=True)
+def write(name: str, pack: dict, out: str = FIXTURES) -> None:
+    os.makedirs(out, exist_ok=True)
     raw = json.dumps(pack, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    with open(os.path.join(FIXTURES, name + ".json"), "wb") as f:
+    with open(os.path.join(out, name + ".json"), "wb") as f:
         f.write(raw)
     image, _ = lens_format.build_lens(json.loads(raw.decode("utf-8")))
-    with open(os.path.join(FIXTURES, name + ".lens.hex"), "w", encoding="ascii") as f:
+    with open(os.path.join(out, name + ".lens.hex"), "w", encoding="ascii") as f:
         f.write(to_hex(image))
 
 
 FIXTURE_PACKS = {"mini-en-ru": mini_en_ru, "mini-en-en": mini_en_en}
 
 
-def write_gloss_cases(readest_dir: str, per_pack: int = 120) -> None:
+def write_gloss_cases(readest_dir: str, per_pack: int = 120, out: str = FIXTURES) -> None:
     """Sample real glosses from Readest packs into gloss_cases.txt: `<mono> <hex raw> <hex clean>`
     per line, so the C++ cleaner is checked against this one on real data, not just hand-made
     edge cases."""
@@ -135,17 +138,21 @@ def write_gloss_cases(readest_dir: str, per_pack: int = 120) -> None:
         for raw in chosen:
             clean = lens_format.clean_gloss(raw, mono)
             lines.append(f"{int(mono)} {raw.encode().hex()} {clean.encode().hex() or '-'}")
-    with open(os.path.join(FIXTURES, "gloss_cases.txt"), "w", encoding="ascii") as f:
+    with open(os.path.join(out, "gloss_cases.txt"), "w", encoding="ascii") as f:
         f.write("\n".join(lines) + "\n")
     print(f"wrote gloss_cases.txt ({len(lines)} cases)", file=sys.stderr)
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("readest_dir", nargs="?", help="Readest data/wordlens directory (refreshes gloss_cases.txt)")
+    ap.add_argument("--out", default=FIXTURES, help="fixture directory (default: tests/fixtures)")
+    args = ap.parse_args(argv)
     for name, make in FIXTURE_PACKS.items():
-        write(name, make())
+        write(name, make(), args.out)
         print(f"wrote {name}.json / {name}.lens.hex", file=sys.stderr)
-    if len(sys.argv) > 1:
-        write_gloss_cases(sys.argv[1])
+    if args.readest_dir:
+        write_gloss_cases(args.readest_dir, out=args.out)
     return 0
 
 
