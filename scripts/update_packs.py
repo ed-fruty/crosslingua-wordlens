@@ -21,8 +21,11 @@ are sent to the translation service. Entries whose gloss could not be translated
     python3 scripts/update_packs.py --readest-dir ~/readest/apps/readest-app/data/wordlens
     python3 scripts/update_packs.py --offline           # never call the translation service
 
-Packs that are not Readest's (imported with import_packs.py) are carried over untouched, and so
-are the `<!-- name:begin -->` ... `<!-- name:end -->` sections of ATTRIBUTION.md.
+Every Readest pair is synced except those whose source language needs a word segmenter
+(zh/ja/ko/th), which the firmware refuses. Packs that are not Readest's (imported with
+import_packs.py) are carried over untouched, even when Readest publishes the same pair, and so are
+the `<!-- name:begin -->` ... `<!-- name:end -->` sections of ATTRIBUTION.md. Run readme_table.py
+afterwards to refresh the README's pack table.
 
 Exits non-zero when a download does not match its sha256 or a built pack fails verification.
 Commits are left to you; the script prints the paths to `git add`.
@@ -56,10 +59,21 @@ READEST_CDN = "https://cdn.readest.com/wordlens"
 # Readest sha256 cannot see (cleaning rules, en-uk derivation), so every pack is rebuilt.
 DATA_VERSION = 1
 
-# Source languages the firmware's Word Lens tokenizer handles: space-delimited Latin and Cyrillic
-# scripts. zh/ja/ko/th need a word segmenter, and Readest ships no vi/hu/ar source packs.
-SUPPORTED_SOURCES = {"en", "de", "es", "fr", "it", "pt", "ru"}
+# The firmware's Word Lens tokenizer splits on spaces, so it takes every source language except the
+# ones that need a word segmenter (supportedSource() in the firmware's WordLensPacksActivity.cpp).
+# Target languages are unrestricted.
+NEEDS_SEGMENTER = {"zh", "ja", "ko", "th"}
 DERIVED = {"en-uk": "en-ru"}
+
+
+def supported_source(code: str) -> bool:
+    primary = re.split(r"[-_]", code or "")[0].lower()
+    return bool(primary) and primary not in NEEDS_SEGMENTER
+
+
+def imported(entry: dict | None) -> bool:
+    """A pack merged by import_packs.py (it records `origin`); never replaced from Readest."""
+    return bool(entry and entry.get("origin"))
 
 
 class VerificationError(Exception):
@@ -201,6 +215,8 @@ def attribution_text(packs: list[dict], attributions: dict[str, str], previous: 
         "",
     ]
     for p in packs:
+        if imported(p):
+            continue  # listed in the importer's own section
         lines.append(f"- `{p['file']}`: {attributions.get(p['pair'], lens_format.DEFAULT_ATTRIBUTION)}")
     lines.append("")
     text = "\n".join(lines)
@@ -216,7 +232,8 @@ def main(argv=None) -> int:
     ap.add_argument("--attribution", default=DEFAULT_ATTRIBUTION_PATH,
                     help="plain-text copy of ATTRIBUTION.md (default: the repository root)")
     ap.add_argument("--en-uk-cache", default=make_en_uk.DEFAULT_CACHE)
-    ap.add_argument("--pairs", help="comma-separated pairs to process (default: all supported)")
+    ap.add_argument("--pairs", help="comma-separated pairs to process (default: every Readest pair whose "
+                    "source language the firmware tokenizes)")
     ap.add_argument("--exclude", help="comma-separated pairs to leave as they are")
     ap.add_argument("--dry-run", action="store_true", help="report changes without writing or translating")
     ap.add_argument("--offline", action="store_true", help="never call the translation service")
@@ -245,8 +262,19 @@ def run(args) -> int:
 
     wanted = pair_list(args.pairs)
     excluded = pair_list(args.exclude) or set()
-    upstream_pairs = sorted(p for p, e in source.by_pair.items() if e["source"] in SUPPORTED_SOURCES)
-    all_pairs = sorted(set(upstream_pairs) | {d for d, base in DERIVED.items() if base in source.by_pair})
+    upstream_pairs = []
+    for pair, entry in sorted(source.by_pair.items()):
+        if not supported_source(entry["source"]):
+            print(f"skip {pair}: source language {entry['source']!r} needs a word segmenter", file=sys.stderr)
+        elif imported(old_by_pair.get(pair)):
+            print(f"skip {pair}: kept the imported pack ({old_by_pair[pair]['origin'].get('tool', '?')})",
+                  file=sys.stderr)
+        elif pair in DERIVED:
+            print(f"skip {pair}: Readest ships it natively, but the derived pack is published "
+                  f"(see DERIVED)", file=sys.stderr)
+        else:
+            upstream_pairs.append(pair)
+    all_pairs = sorted(set(upstream_pairs) | {d for d, base in DERIVED.items() if base in upstream_pairs})
     selected = [p for p in all_pairs if (wanted is None or p in wanted) and p not in excluded]
     unknown = ((wanted or set()) | excluded) - set(all_pairs)
     if unknown:

@@ -67,6 +67,7 @@ jobs:
           if [ "${RETRY_FAILED:-false}" = "true" ]; then args+=(--retry-failed); fi
           if [ "$TRANSLATE_OK" != "true" ]; then args+=(--exclude en-uk); fi
           python3 scripts/update_packs.py "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/sync.log"
+          python3 scripts/readme_table.py
 
       - name: Tests
         run: python3 -m unittest discover -s tests -v
@@ -103,7 +104,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$BRANCH"
-          git add -A data ATTRIBUTION.md
+          git add -A data ATTRIBUTION.md README.md
           git commit -q -m "data: sync Word Lens packs from Readest ($(date -u +%Y-%m-%d))"
           git push --force origin "HEAD:$BRANCH"
 

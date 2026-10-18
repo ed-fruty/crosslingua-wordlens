@@ -22,33 +22,42 @@ https://github.com/ed-fruty/crosslingua-wordlens/releases/latest/download/word-l
 (WikDict / Wiktionary, FrequencyWords, ECDICT, WordNet). Глоссы чистятся: первые смыслы,
 без разметки, помет частей речи, ударений и огласовок.
 
-| Пара | Направление | Размер | Леммы | Записи (с формами) |
-|---|---|---:|---:|---:|
-| `de-en` | de → en | 1.32 MB | 13806 | 63088 |
-| `en-ar` | en → ar | 0.69 MB | 12870 | 26331 |
-| `en-de` | en → de | 0.80 MB | 14926 | 31789 |
-| `en-en` | en → en (простые определения) | 1.41 MB | 24246 | 56686 |
-| `en-es` | en → es | 0.79 MB | 14769 | 31798 |
-| `en-fr` | en → fr | 0.77 MB | 15070 | 31688 |
-| `en-hu` | en → hu | 0.74 MB | 13639 | 29391 |
-| `en-pt` | en → pt | 0.77 MB | 14656 | 31715 |
-| `en-ru` | en → ru | 0.99 MB | 14914 | 31691 |
-| `en-uk` | en → uk (производный, см. ниже) | 0.80 MB | 14914 | 31691 |
-| `en-vi` | en → vi | 0.53 MB | 9759 | 20572 |
-| `en-zh` | en → zh | 1.42 MB | 24446 | 56714 |
-| `es-en` | es → en | 1.26 MB | 10949 | 68297 |
-| `fr-en` | fr → en | 1.33 MB | 12361 | 68151 |
-| `it-en` | it → en | 1.37 MB | 11657 | 72058 |
-| `pt-en` | pt → en | 1.72 MB | 11808 | 95878 |
-| `ru-en` | ru → en | 1.48 MB | 8780 | 56172 |
-| `ro-ru` | ro → ru (ua-dict, через граф словарей) | 1.83 MB | 13450 | 89021 |
-| `ro-uk` | ro → uk (ua-dict, через граф словарей) | 1.89 MB | 13540 | 89753 |
+Список пакетов ниже генерируется из манифеста архива (`python3 scripts/readme_table.py`;
+`ci.yml` проверяет, что он не устарел). Происхождение: `readest` — сконвертирован из пакета Readest,
+`derived` — выведен нами (en-uk, см. ниже), `ua-dict` — импортирован из ua-dict.
 
-Актуальный список всегда в манифесте последнего релиза (и в его описании). Исходные языки
-ограничены тем, что умеет токенайзер прошивки: пробельно-разделённые латиница и кириллица
-(`SUPPORTED_SOURCES` в `scripts/update_packs.py`; в прошивке — `supportedSource()` в
-`src/modules/lingua/activities/WordLensPacksActivity.cpp`). Пакет с другим исходным языком
-(например, `ro-*` из ua-dict) устройство увидит только после того, как этот язык добавят в прошивку.
+<!-- packs-table:begin -->
+Пакетов: 19, всего 21.9 MB.
+
+| Пара | Исходный | Перевод | Происхождение | Размер | Леммы | Записи (с формами) |
+|---|---|---|---|---:|---:|---:|
+| `de-en` | de | en | readest | 1.32 MB | 13806 | 63088 |
+| `en-ar` | en | ar | readest | 0.69 MB | 12870 | 26331 |
+| `en-de` | en | de | readest | 0.80 MB | 14926 | 31789 |
+| `en-en` | en | en | readest (определения на английском) | 1.41 MB | 24246 | 56686 |
+| `en-es` | en | es | readest | 0.79 MB | 14769 | 31798 |
+| `en-fr` | en | fr | readest | 0.77 MB | 15070 | 31688 |
+| `en-hu` | en | hu | readest | 0.74 MB | 13639 | 29391 |
+| `en-pt` | en | pt | readest | 0.77 MB | 14656 | 31715 |
+| `en-ru` | en | ru | readest | 0.99 MB | 14914 | 31691 |
+| `en-uk` | en | uk | derived из en-ru (машинный перевод) | 0.80 MB | 14914 | 31691 |
+| `en-vi` | en | vi | readest | 0.53 MB | 9759 | 20572 |
+| `en-zh` | en | zh | readest | 1.42 MB | 24446 | 56714 |
+| `es-en` | es | en | readest | 1.26 MB | 10949 | 68297 |
+| `fr-en` | fr | en | readest | 1.33 MB | 12361 | 68151 |
+| `it-en` | it | en | readest | 1.37 MB | 11657 | 72058 |
+| `pt-en` | pt | en | readest | 1.72 MB | 11808 | 95878 |
+| `ro-ru` | ro | ru | ua-dict (профиль personal) | 1.83 MB | 13450 | 89021 |
+| `ro-uk` | ro | uk | ua-dict (профиль personal) | 1.89 MB | 13540 | 89753 |
+| `ru-en` | ru | en | readest | 1.48 MB | 8780 | 56172 |
+<!-- packs-table:end -->
+
+Это все пакеты, которые есть у Readest (на CDN и в `apps/readest-app/data/wordlens` его
+репозитория — 17 пар на 2026-10-18), кроме `zh-en`. Исходный язык ограничен токенайзером прошивки:
+он делит текст по пробелам, поэтому подходит любой язык, кроме тех, которым нужен сегментатор слов —
+zh, ja, ko, th (`NEEDS_SEGMENTER` в `scripts/update_packs.py`; в прошивке — `supportedSource()` в
+`src/modules/lingua/activities/WordLensPacksActivity.cpp`). Язык перевода не ограничен (`en-zh`
+есть). Новые пары Readest с подходящим исходным языком подхватываются синхронизацией автоматически.
 
 ## Форматы
 
@@ -82,6 +91,7 @@ scripts/import_packs.py         импорт пакетов, собранных 
 scripts/lens_format.py          эталонный формат .lens
 scripts/pack_archive.py         воспроизводимый архив
 scripts/stage_release_assets.py проверка и распаковка архива в ассеты релиза
+scripts/readme_table.py         таблица пакетов в README из манифеста
 scripts/make_fixtures.py        фикстуры для тестов (здесь и в прошивке)
 tests/                          офлайн-тесты и фикстуры
 .github/workflows/              ci.yml, sync.yml, release.yml
@@ -97,6 +107,7 @@ python3 scripts/update_packs.py                    # пересобрать из
 python3 scripts/update_packs.py --pairs en-ru,en-uk
 python3 scripts/update_packs.py --exclude en-uk    # всё, кроме en-uk
 python3 scripts/update_packs.py --readest-dir ~/readest/apps/readest-app/data/wordlens   # из локального checkout
+python3 scripts/readme_table.py                    # обновить таблицу пакетов в README
 ```
 
 Скрипт качает `manifest.json` и пакеты с `https://cdn.readest.com/wordlens/`, сверяет их sha256 и
@@ -116,7 +127,10 @@ en-uk можно пересобрать локально и запушить в 
 
 ## Как собирается en-uk
 
-У Readest нет en-uk, поэтому он выводится из en-ru (`scripts/make_en_uk.py`, его вызывает
+У Readest нет ни en-uk, ни других пар с украинским (проверено 2026-10-18: CDN-манифест и `main`
+репозитория Readest — 17 пар, `uk` нет ни как исходного, ни как целевого языка). Если Readest
+добавит нативный en-uk, `update_packs.py` его пропустит и сообщит об этом (`DERIVED` побеждает) —
+тогда его нужно сравнить с нашим и решить осознанно. Поэтому он выводится из en-ru (`scripts/make_en_uk.py`, его вызывает
 `update_packs.py`): первый смысл каждой русской глоссы переводится на украинский через бесплатный
 endpoint Google `translateHtml` (тот же, что у движка «Google (Free) — HTML» в прошивке), пачками
 до 100 строк с паузами. Ранги и словоформы — от en-ru.
@@ -140,10 +154,12 @@ cd ../crosslingua-wordlens
 python3 scripts/import_packs.py --packs ../ua-dict/dist/wordlens            # план (dry run)
 python3 scripts/import_packs.py --packs ../ua-dict/dist/wordlens --apply    # записать
 python3 scripts/import_packs.py --remove ro-ru --name ua-dict --apply       # убрать пакет
+python3 scripts/readme_table.py                                             # обновить таблицу
 ```
 
 Импорт проверяет `formatVersion`, sha256/размер и разбор каждого `.lens`, добавляет или заменяет
-пакеты той же пары (пакеты Readest заменять отказывается), обновляет манифест и вставляет в
+пакеты той же пары (пакеты Readest заменять отказывается; а `update_packs.py` не заменяет
+импортированный пакет, даже если у Readest появится та же пара), обновляет манифест и вставляет в
 `ATTRIBUTION.md` раздел между `<!-- ua-dict:begin -->` и `<!-- ua-dict:end -->`. `update_packs.py`
 оставляет импортированные пакеты и такие разделы как есть, так что синхронизация с Readest их не
 стирает. Затем — обычный коммит и релиз. (Скрипт `scripts/import_into_crosslingua.py` в ua-dict
@@ -156,8 +172,8 @@ python3 scripts/import_packs.py --remove ro-ru --name ua-dict --apply       # у
 
 ```bash
 git pull
-git tag packs-2026.10.17
-git push origin packs-2026.10.17
+git tag packs-2026.10.18
+git push origin packs-2026.10.18
 ```
 
 `release.yml` по тегу прогоняет тесты, распаковывает архив, сверяет каждый пакет с sha256 и

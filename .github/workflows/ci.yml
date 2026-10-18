@@ -31,3 +31,5 @@ jobs:
           test "$staged" -eq "$expected"
           # The plain-text ATTRIBUTION.md matches the one inside the archive.
           tar -xJOf data/word-lens-packs.tar.xz ATTRIBUTION.md | cmp - ATTRIBUTION.md
+          # The README's pack table matches the manifest.
+          python3 scripts/readme_table.py --check

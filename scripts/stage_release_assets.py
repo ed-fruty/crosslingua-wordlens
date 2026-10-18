@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import lens_format  # noqa: E402
 from pack_archive import ARCHIVE_NAME, ATTRIBUTION_NAME, MANIFEST_NAME, read_archive  # noqa: E402
+from readme_table import pack_origin  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.abspath(os.path.join(HERE, "..", "data"))
@@ -33,11 +34,11 @@ def release_notes(manifest: dict) -> str:
         "Word Lens gloss packs for CrossLingua (`.lens` format v%d). Devices download them from" % manifest["formatVersion"],
         "`releases/latest/download/`; sources and licences: `%s`." % ATTRIBUTION_ASSET,
         "",
-        "| Pair | File | Size | Headwords | sha256 |",
-        "|---|---|---:|---:|---|",
+        "| Pair | File | Origin | Size | Headwords | sha256 |",
+        "|---|---|---|---:|---:|---|",
     ]
     for p in manifest["packs"]:
-        lines.append(f"| {p['source']} → {p['target']} | `{p['file']}` | {p['bytes'] / 1e6:.2f} MB | "
+        lines.append(f"| {p['source']} → {p['target']} | `{p['file']}` | {pack_origin(p)} | {p['bytes'] / 1e6:.2f} MB | "
                      f"{p['headwords']} | `{p['sha256'][:16]}…` |")
     lines.append("")
     return "\n".join(lines)

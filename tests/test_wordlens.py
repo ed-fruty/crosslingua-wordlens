@@ -19,6 +19,7 @@ import make_en_uk  # noqa: E402
 import import_packs  # noqa: E402
 import make_fixtures  # noqa: E402
 import pack_archive  # noqa: E402
+import readme_table  # noqa: E402
 import stage_release_assets  # noqa: E402
 import update_packs  # noqa: E402
 
@@ -151,26 +152,19 @@ class UpdatePacksTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir)
 
-    def write_pack(self, pack):
-        raw = json.dumps(pack, ensure_ascii=False).encode("utf-8")
-        with open(os.path.join(self.readest, "en-ru.json"), "wb") as f:
-            f.write(raw)
-        manifest = {
-            "schemaVersion": 1,
-            "packs": [
-                {
-                    "pair": "en-ru",
-                    "source": "en",
-                    "target": "ru",
-                    "file": "en-ru.json",
-                    "bytes": len(raw),
-                    "sha256": hashlib.sha256(raw).hexdigest(),
-                    "entries": len(pack["entries"]),
-                }
-            ],
-        }
+    def write_pack(self, pack, others=None):
+        """A Readest data/wordlens directory: en-ru plus `others` ({pair: pack})."""
+        entries = []
+        for pair, p in sorted({"en-ru": pack, **(others or {})}.items()):
+            raw = json.dumps(p, ensure_ascii=False).encode("utf-8")
+            with open(os.path.join(self.readest, f"{pair}.json"), "wb") as f:
+                f.write(raw)
+            source, target = pair.split("-")
+            entries.append({"pair": pair, "source": source, "target": target, "file": f"{pair}.json",
+                            "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                            "entries": len(p["entries"])})
         with open(os.path.join(self.readest, "manifest.json"), "w") as f:
-            json.dump(manifest, f)
+            json.dump({"schemaVersion": 1, "packs": entries}, f)
 
     def run_update(self, *extra):
         argv = ["--readest-dir", self.readest, "--out", self.out, "--attribution",
@@ -250,6 +244,41 @@ class UpdatePacksTest(unittest.TestCase):
         self.assertEqual(after["word-lens-en-uk.lens"], first["word-lens-en-uk.lens"])
         self.assertNotEqual(self.run_update("--exclude", "xx-yy"), 0)
 
+    def test_every_source_language_but_the_segmented_ones(self):
+        for code in ("en", "nl", "pl", "ro", "uk", "pt-BR"):
+            self.assertTrue(update_packs.supported_source(code), code)
+        for code in ("zh", "ja", "ko", "th", "zh-Hant", "", None):
+            self.assertFalse(update_packs.supported_source(code), code)
+
+        def tiny(source, target, word, gloss):
+            return {"meta": {"source": source, "target": target, "attribution": "x"},
+                    "entries": {word: {"r": 3000, "g": gloss}}, "inflections": {}}
+
+        self.write_pack(en_ru_pack(), {"nl-en": tiny("nl", "en", "huis", "house"),
+                                       "zh-en": tiny("zh", "en", "房子", "house"),
+                                       "en-zh": tiny("en", "zh", "house", "房子")})
+        self.assertEqual(self.run_update(), 0)
+        manifest = json.loads(self.snapshot()["word-lens-manifest.json"])
+        self.assertEqual([p["pair"] for p in manifest["packs"]], ["en-ru", "en-uk", "en-zh", "nl-en"])
+        self.assertNotEqual(self.run_update("--pairs", "zh-en"), 0)
+
+    def test_readme_table_follows_the_manifest(self):
+        self.assertEqual(self.run_update(), 0)
+        readme = os.path.join(self.dir, "README.md")
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(f"intro\n\n{readme_table.BEGIN}\nstale\n{readme_table.END}\n\noutro\n")
+        args = ["--data", self.out, "--readme", readme]
+        with _quiet():
+            self.assertEqual(readme_table.main(args + ["--check"]), 1)
+            self.assertEqual(readme_table.main(args), 0)
+            self.assertEqual(readme_table.main(args + ["--check"]), 0)
+        with open(readme, encoding="utf-8") as f:
+            text = f.read()
+        self.assertTrue(text.startswith("intro\n") and text.endswith("\noutro\n"))
+        self.assertNotIn("stale", text)
+        self.assertRegex(text, r"\| `en-ru` \| en \| ru \| readest \|")
+        self.assertRegex(text, r"\| `en-uk` \| en \| uk \| derived ")
+
     def write_external(self, pair="ro-uk"):
         """An ua-dict style dist/wordlens directory with one pack."""
         ext = os.path.join(self.dir, "ext")
@@ -311,6 +340,21 @@ class UpdatePacksTest(unittest.TestCase):
         self.assertNotIn("word-lens-ro-uk.lens", removed)
         self.assertNotIn("ua-dict:begin", removed["ATTRIBUTION.md"].decode("utf-8"))
         self.assertNotEqual(self.run_import("--packs", self.write_external("en-ru"), "--apply"), 0)
+
+    def test_a_readest_pair_never_replaces_an_imported_pack(self):
+        self.assertEqual(self.run_update(), 0)
+        self.assertEqual(self.run_import("--packs", self.write_external(), "--apply"), 0)
+        imported = self.snapshot()
+        readest_ro = {"meta": {"source": "ro", "target": "uk", "attribution": "Readest ro-uk."},
+                      "entries": {"casa": {"r": 3000, "g": "хата"}}, "inflections": {}}
+        self.write_pack(en_ru_pack(), {"ro-uk": readest_ro})
+        self.assertEqual(self.run_update("--force"), 0)
+        after = self.snapshot()
+        self.assertEqual(after["word-lens-ro-uk.lens"], imported["word-lens-ro-uk.lens"])
+        manifest = json.loads(after["word-lens-manifest.json"])
+        self.assertEqual(next(p for p in manifest["packs"] if p["pair"] == "ro-uk")["origin"]["tool"], "ua-dict")
+        # The imported pack is listed once, in its own attribution section.
+        self.assertEqual(after["ATTRIBUTION.md"].decode("utf-8").count("`word-lens-ro-uk.lens`:"), 1)
 
 
 if __name__ == "__main__":
